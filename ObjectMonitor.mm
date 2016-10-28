@@ -8,7 +8,7 @@
 
 #import "ObjectMonitor.h"
 #import <pthread.h>
-#import <objc/runtime.h>
+#include <objc/runtime.h>
 #include <set>
 
 static pthread_rwlock_t _buildinClassesLock = PTHREAD_RWLOCK_INITIALIZER;
@@ -27,6 +27,7 @@ static std::set<void *> __all_monitored_objects;
 static IMP originDeallocIMP;
 static IMP originRetainIMP;
 static IMP originRelaseIMP;
+static IMP originAutoRelaseIMP;
 
 @implementation ObjectMonitor
 
@@ -70,6 +71,17 @@ static IMP originRelaseIMP;
             void(*origin)(__unsafe_unretained id, SEL) = (void(*)(__unsafe_unretained id, SEL))originRelaseIMP;
             origin(aSelf, cmd);
         }];
+        
+        
+        SEL atuoreleaseSEL = NSSelectorFromString(@"autorelease");
+        originAutoRelaseIMP = [self hookSelector:atuoreleaseSEL block:^(__unsafe_unretained id aSelf, SEL cmd) {
+            if ([ObjectMonitor isShouldMonitorWith:aSelf]) {
+                [ObjectMonitor logAutoRelease:aSelf];
+            }
+            
+            void(*origin)(__unsafe_unretained id, SEL) = (void(*)(__unsafe_unretained id, SEL))originAutoRelaseIMP;
+            origin(aSelf, cmd);
+        }];
     });
 }
 
@@ -109,6 +121,7 @@ static IMP originRelaseIMP;
     BuildinClassRdLock();
     for (std::set<void *>::iterator it=__all_monitored_objects.begin(); it!=__all_monitored_objects.end(); it++) {
         if (*it == (__bridge void *)obj) {
+            BuildinClassUnlock();
             return YES;
         }
     }
@@ -132,6 +145,12 @@ static IMP originRelaseIMP;
 {
     NSLog(@"--release--: %p", obj);
 }
+
++ (void)logAutoRelease:(__unsafe_unretained id)obj
+{
+    NSLog(@"--auto release--: %p", obj);
+}
+
 
 + (NSString *)dumpLogWith:(__unsafe_unretained id)obj
 {
